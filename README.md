@@ -1,2 +1,2 @@
 # forklift
-Make Python CLI toosl blazing fast!
+Make Python CLI tools blazing fast 🚀
