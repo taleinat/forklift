@@ -47,24 +47,28 @@ class _SocketWriter(io.BufferedIOBase):
 
 
 def get_service_runtime_dir_path() -> Path:
-    runtime_dir_path = Path(
-        os.getenv("XDG_RUNTIME_DIR") or os.getenv("TMPDIR") or "/tmp"
-    )
-    service_runtime_dirs = list(
-        runtime_dir_path.glob(f"forklift-{os.getenv('USER')}-??????")
-    )
-    if service_runtime_dirs:
-        if len(service_runtime_dirs) > 1:
-            raise Exception("TODO")
-        service_runtime_dir = service_runtime_dirs[0]
+    runtime_dir = os.getenv("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        service_runtime_dir = Path(runtime_dir) / "forklift"
+        service_runtime_dir.mkdir(exist_ok=True, mode=0o700)
     else:
-        random_part = "".join(
-            [random.choice(string.ascii_uppercase) for _i in range(6)]
+        temp_dir_path = Path(os.getenv("TMPDIR") or "/tmp")
+        service_runtime_dirs = list(
+            temp_dir_path.glob(f"forklift-{os.getenv('USER')}-??????")
         )
-        service_runtime_dir = (
-            runtime_dir_path / f"forklift-{os.getenv('USER')}-{random_part}"
-        )
-        service_runtime_dir.mkdir(exist_ok=False, mode=0o700)
+        if service_runtime_dirs:
+            if len(service_runtime_dirs) > 1:
+                raise Exception("Error: Multiple service runtime dirs found.")
+            service_runtime_dir = service_runtime_dirs[0]
+        else:
+            # TODO: Fix race condition here.
+            random_part = "".join(
+                [random.choice(string.ascii_uppercase) for _i in range(6)]
+            )
+            service_runtime_dir = (
+                temp_dir_path / f"forklift-{os.getenv('USER')}-{random_part}"
+            )
+            service_runtime_dir.mkdir(exist_ok=False, mode=0o700)
 
     return service_runtime_dir
 
