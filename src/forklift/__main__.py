@@ -8,12 +8,11 @@ import string
 import sys
 import time
 from pathlib import Path
-from typing import cast, Any, BinaryIO, Tuple, Union
+from typing import Any, BinaryIO, Tuple, Union, cast
 
+from .__version__ import __version__
+from .tools import ToolExceptionBase, get_tool_runner
 from .utils import pid_exists
-
-# TODO: Make this generic.
-from black import patched_main as black_main
 
 
 class _SocketWriter(io.BufferedIOBase):
@@ -75,15 +74,15 @@ def get_service_runtime_dir_path() -> Path:
     return service_runtime_dir
 
 
-def get_pid_and_port_files() -> Tuple[Path, Path]:
+def get_pid_and_port_files(tool_name: str) -> Tuple[Path, Path]:
     service_runtime_dir_path = get_service_runtime_dir_path()
-    pid_file_path = service_runtime_dir_path / "black.pid"
-    port_file_path = service_runtime_dir_path / "black.port"
+    pid_file_path = service_runtime_dir_path / f"{tool_name}.pid"
+    port_file_path = service_runtime_dir_path / f"{tool_name}.port"
     return pid_file_path, port_file_path
 
 
-def remove_pid_and_port_files():
-    for file_path in get_pid_and_port_files():
+def remove_pid_and_port_files(tool_name: str):
+    for file_path in get_pid_and_port_files(tool_name):
         if file_path.exists():
             try:
                 file_path.unlink()
@@ -91,8 +90,10 @@ def remove_pid_and_port_files():
                 pass
 
 
-def start(daemonize: bool = False) -> None:
-    pid_file_path, port_file_path = get_pid_and_port_files()
+def start(tool_name: str, daemonize: bool = True) -> None:
+    tool_loader = get_tool_runner(tool_name)
+
+    pid_file_path, port_file_path = get_pid_and_port_files(tool_name)
 
     if pid_file_path.exists():
         file_pid = int(pid_file_path.read_text())
@@ -105,6 +106,7 @@ def start(daemonize: bool = False) -> None:
 
         pid = os.fork()
         if pid > 0:
+            print(f'"forklift {tool_name}" daemon process starting...')
             sys.exit(0)
 
         # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
@@ -176,9 +178,8 @@ def start(daemonize: bool = False) -> None:
     start_time = time.monotonic()
     sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
     try:
-        # TODO: Make this generic.
-        sys.argv[0] = "black"
-        black_main()
+        sys.argv[0] = tool_name
+        tool_loader()
     except SystemExit as exc:
         end_time = time.monotonic()
         print(f"Time: {end_time - start_time}", file=sys.__stdout__)
@@ -196,16 +197,16 @@ def start(daemonize: bool = False) -> None:
         conn.shutdown(socket.SHUT_WR)
 
 
-def stop() -> None:
+def stop(tool_name: str) -> None:
     try:
-        pid_file_path, _port_file_path = get_pid_and_port_files()
+        pid_file_path, _port_file_path = get_pid_and_port_files(tool_name)
         if not pid_file_path.exists():
-            print("Forklift daemon process not found.")
+            print(f'"forklift {tool_name}" daemon process not found.')
             sys.exit(1)
 
         file_pid = int(pid_file_path.read_text())
         if not pid_exists(file_pid):
-            print("Forklift daemon process not found.")
+            print(f'"forklift {tool_name}" daemon process not found.')
             sys.exit(1)
 
         os.kill(file_pid, signal.SIGTERM)
@@ -216,26 +217,47 @@ def stop() -> None:
         else:
             os.kill(file_pid, signal.SIGKILL)
 
-        print("Forklift daemon process stopped.")
+        print(f'"forklift {tool_name}" daemon process stopped.')
 
     finally:
-        remove_pid_and_port_files()
+        remove_pid_and_port_files(tool_name)
 
 
-def main():
+def print_usage() -> None:
+    print(f"Usage: {sys.argv[0]} start|stop tool_name")
+
+
+def main() -> None:
     args = sys.argv[1:]
-    if len(args) != 1:
-        print(f"Usage: {sys.argv[0]} start|stop")
-        sys.exit(1)
-    (cmd,) = args
 
-    if cmd == "start":
-        start(daemonize=True)
-    elif cmd == "stop":
-        stop()
-    else:
-        print(f"Usage: {sys.argv[0]} start|stop")
-        sys.exit(1)
+    if len(args) == 1:
+        (cmd,) = args
+        if cmd == "-h" or cmd == "--help":
+            print_usage()
+            sys.exit(0)
+        elif cmd == "version" or cmd == "--version":
+            print(f"forklift v{__version__}")
+            sys.exit(0)
+    elif len(args) == 2:
+        (cmd, tool_name) = args
+        tool_name = tool_name.strip().lower()
+        try:
+            if cmd == "start":
+                start(tool_name)
+                sys.exit(0)
+            elif cmd == "stop":
+                stop(tool_name)
+                sys.exit(0)
+            elif cmd == "restart":
+                stop(tool_name)
+                start(tool_name)
+                sys.exit(0)
+        except ToolExceptionBase as exc:
+            print(str(exc))
+            sys.exit(1)
+
+    print_usage()
+    sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -2,27 +2,34 @@
 set -eEu -o pipefail
 
 function usage() {
-  echo "Usage: $0 sub-command [OPTIONS]"
+  echo "Usage: $0 command tool_name ..."
   echo
-  echo "Available sub-commands and their options:"
+  echo "Available commands:"
   echo
-  echo "start: Start a background daemon for a CLI tool."
-  echo "stop:  Stop a background daemon for a CLI tool."
-  echo "run:   Run a CLI tool using a background process."
+  echo "start tool_name            Start a background daemon for a CLI tool."
+  echo "stop tool_name             Stop a background daemon for a CLI tool."
+  echo "restart tool_name          Restart a background daemon for a CLI tool."
+  echo "run tool_name [arg ...]    Run a CLI tool using a background process."
+  echo
 }
 
 case "${1:-}" in
 -h|--help)
   usage && exit 0 ;;
-start|stop)
+start|stop|restart|version|--version)
   exec forkliftctl "$@" ;;
 run)
+  shift
+  [[ $# -eq 0 ]] && usage && exit 1
+  tool_name="$1"
   shift
   ;;
 *)
   usage && exit 1 ;;
 esac
 
+
+# Find service runtime directory.
 runtime_dir="${XDG_RUNTIME_DIR}"
 if [ -n "$runtime_dir" ]; then
   service_runtime_dir="$runtime_dir/forklift"
@@ -42,11 +49,11 @@ else
 fi
 
 # Read port from port file.
-if [ ! -f "$service_runtime_dir/black.port" ]; then
+if [ ! -f "$service_runtime_dir/$tool_name.port" ]; then
   echo "Service not running." >&2
   exit 1
 fi
-IFS= read -r port <"$service_runtime_dir/black.port"
+IFS= read -r port <"$service_runtime_dir/$tool_name.port"
 
 # Open TCP connection.
 exec 3<>"/dev/tcp/127.0.0.1/$port"
