@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu -o pipefail
+set -eEu -o pipefail
 
 runtime_dir="${XDG_RUNTIME_DIR}"
 if [ -n "$runtime_dir" ]; then
@@ -26,16 +26,24 @@ if [ ! -f "$service_runtime_dir/black.port" ]; then
 fi
 IFS= read -r port <"$service_runtime_dir/black.port"
 
-# Open tcp connection.
+# Open TCP connection.
 exec 3<>"/dev/tcp/127.0.0.1/$port"
+
+# Close TCP connection upon exit.
+function close_connection {
+  exec 3<&-
+}
+trap close_connection EXIT
+
 # Write cmdline arguments to tcp connection.
 echo "$@" >&3
 # # Redirect stdin into tcp connection.
 # exec 3<&0
 
-# TODO: Use an exit trap to ensure closing the TCP connection.
 # TODO: Forward signals to daemon sub-process or make part of this process group.
 
+# Read stdout and stderr from connection, line by line, and echo them.
+# TODO: Support outputs without a line ending.
 while IFS= read -r line; do
   case "$line" in
     1*)
@@ -54,4 +62,3 @@ while IFS= read -r line; do
       ;;
   esac
 done <&3
-exec 3<&-  # close fd

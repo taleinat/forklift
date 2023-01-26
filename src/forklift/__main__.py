@@ -27,6 +27,7 @@ class _SocketWriter(io.BufferedIOBase):
         return True
 
     def write(self, b: Union[bytes, bytearray]) -> int:  # type: ignore[override]
+        # TODO: Support outputs without a line ending.
         *lines, lastline = b.split(b"\n")
         if lines:
             lines[0] = self._buff + lines[0]
