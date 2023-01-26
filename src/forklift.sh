@@ -48,12 +48,17 @@ else
   service_runtime_dir="${service_runtime_dirs[0]}"
 fi
 
+# Calculate the isolated path for pid and port files.
+isolated_root="$(dirname "$(command -v "$tool_name")")"
+isolated_root_hash="$(echo -n "$isolated_root" | sha256sum - | head -c 8)"
+isolated_path="$service_runtime_dir/$isolated_root_hash/"
+
 # Read port from port file.
-if [ ! -f "$service_runtime_dir/$tool_name.port" ]; then
+if [ ! -f "$isolated_path/$tool_name.port" ]; then
   echo "Service not running." >&2
   exit 1
 fi
-IFS= read -r port <"$service_runtime_dir/$tool_name.port"
+IFS= read -r port <"$isolated_path/$tool_name.port"
 
 # Open TCP connection.
 exec 3<>"/dev/tcp/127.0.0.1/$port"

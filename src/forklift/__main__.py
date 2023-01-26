@@ -1,3 +1,4 @@
+import hashlib
 import io
 import os
 import random
@@ -5,10 +6,14 @@ import shlex
 import signal
 import socket
 import string
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, BinaryIO, Tuple, Union, cast
+
+from vendor.filelock import FileLock
 
 from .__version__ import __version__
 from .tools import ToolExceptionBase, get_tool_runner
@@ -52,37 +57,56 @@ def get_service_runtime_dir_path() -> Path:
     if runtime_dir:
         service_runtime_dir = Path(runtime_dir) / "forklift"
         service_runtime_dir.mkdir(exist_ok=True, mode=0o700)
-    else:
-        temp_dir_path = Path(os.getenv("TMPDIR") or "/tmp")
+        return service_runtime_dir
+
+    temp_dir_path = Path(tempfile.gettempdir())
+    service_runtime_dirs = list(
+        temp_dir_path.glob(f"forklift-{os.getenv('USER')}-??????")
+    )
+    if service_runtime_dirs:
+        if len(service_runtime_dirs) > 1:
+            raise Exception("Error: Multiple service runtime dirs found.")
+        return service_runtime_dirs[0]
+
+    lock = FileLock(temp_dir_path / f"forklift-{os.getenv('USER')}.lock")
+    with lock:
         service_runtime_dirs = list(
             temp_dir_path.glob(f"forklift-{os.getenv('USER')}-??????")
         )
         if service_runtime_dirs:
-            if len(service_runtime_dirs) > 1:
-                raise Exception("Error: Multiple service runtime dirs found.")
-            service_runtime_dir = service_runtime_dirs[0]
-        else:
-            # TODO: Fix race condition here.
-            random_part = "".join(
-                [random.choice(string.ascii_uppercase) for _i in range(6)]
-            )
-            service_runtime_dir = (
+            return service_runtime_dirs[0]
+
+        random_part = "".join(
+            [random.choice(string.ascii_letters) for _i in range(6)]
+        )
+        service_runtime_dir = (
                 temp_dir_path / f"forklift-{os.getenv('USER')}-{random_part}"
-            )
-            service_runtime_dir.mkdir(exist_ok=False, mode=0o700)
+        )
+        service_runtime_dir.mkdir(exist_ok=False, mode=0o700)
+        return service_runtime_dir
 
-    return service_runtime_dir
+
+def get_isolated_service_runtime_dir_path(tool_name) -> Path:
+    service_runtime_dir = get_service_runtime_dir_path()
+
+    tool_executable_path: bytes = subprocess.run(f"command -v {shlex.quote(tool_name)}", shell=True, check=True, capture_output=True).stdout.strip()
+    tool_executable_dir_path: bytes = os.path.dirname(tool_executable_path)
+    tool_executable_dir_path_hash: str = hashlib.sha256(tool_executable_dir_path).hexdigest()[:8]
+    isolated_path: Path = service_runtime_dir / tool_executable_dir_path_hash
+
+    isolated_path.mkdir(exist_ok=True, mode=0o700)
+    return isolated_path
 
 
-def get_pid_and_port_files(tool_name: str) -> Tuple[Path, Path]:
-    service_runtime_dir_path = get_service_runtime_dir_path()
+def get_pid_and_port_file_paths(tool_name: str) -> Tuple[Path, Path]:
+    service_runtime_dir_path = get_isolated_service_runtime_dir_path(tool_name)
     pid_file_path = service_runtime_dir_path / f"{tool_name}.pid"
     port_file_path = service_runtime_dir_path / f"{tool_name}.port"
     return pid_file_path, port_file_path
 
 
 def remove_pid_and_port_files(tool_name: str):
-    for file_path in get_pid_and_port_files(tool_name):
+    for file_path in get_pid_and_port_file_paths(tool_name):
         if file_path.exists():
             try:
                 file_path.unlink()
@@ -93,7 +117,7 @@ def remove_pid_and_port_files(tool_name: str):
 def start(tool_name: str, daemonize: bool = True) -> None:
     tool_loader = get_tool_runner(tool_name)
 
-    pid_file_path, port_file_path = get_pid_and_port_files(tool_name)
+    pid_file_path, port_file_path = get_pid_and_port_file_paths(tool_name)
 
     if pid_file_path.exists():
         file_pid = int(pid_file_path.read_text())
@@ -175,18 +199,22 @@ def start(tool_name: str, daemonize: bool = True) -> None:
         cast(BinaryIO, _SocketWriter(conn, b"2")), write_through=True
     )
 
-    start_time = time.monotonic()
+    # start_time = time.monotonic()
     sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
     try:
         sys.argv[0] = tool_name
         tool_loader()
     except SystemExit as exc:
-        end_time = time.monotonic()
-        print(f"Time: {end_time - start_time}", file=sys.__stdout__)
+        # end_time = time.monotonic()
+        # print(f"Time: {end_time - start_time}", file=sys.__stdout__)
         exit_code = exc.code
-        print(f"{exit_code=}", file=sys.__stdout__)
+        # print(f"{exit_code=}", file=sys.__stdout__)
+        if isinstance(exit_code, bool):
+            exit_code = int(exit_code)
+        elif not isinstance(exit_code, int):
+            exit_code = 1
         conn.sendall(f"rc={exit_code}\n".encode())
-        print("Goodbye!", file=sys.__stdout__)
+        # print("Goodbye!", file=sys.__stdout__)
     finally:
         try:
             rfile.close()
@@ -199,7 +227,7 @@ def start(tool_name: str, daemonize: bool = True) -> None:
 
 def stop(tool_name: str) -> None:
     try:
-        pid_file_path, _port_file_path = get_pid_and_port_files(tool_name)
+        pid_file_path, _port_file_path = get_pid_and_port_file_paths(tool_name)
         if not pid_file_path.exists():
             print(f'"forklift {tool_name}" daemon process not found.')
             sys.exit(1)

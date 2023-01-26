@@ -22,9 +22,16 @@ def run_isort() -> None:
     main()
 
 
+def run_flake8() -> None:
+    from flake8.main.cli import main
+
+    main()
+
+
 runners: Dict[str, Callable[[], None]] = {
     "black": run_black,
     "isort": run_isort,
+    "flake8": run_flake8,
 }
 
 
