@@ -13,9 +13,12 @@ classifiers = [
   "Development Status :: 1 - Planning",
   "Environment :: Console",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",  "Operating System :: OS Independent",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.6",
   "Programming Language :: Python :: 3.7",
   "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
@@ -28,7 +31,7 @@ dependencies = [
 dynamic = ["readme", "version"]
 
 [project.scripts]
-forklift = "forklift:main"
+forkliftctl = "forklift.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/taleinat/forklift"
@@ -45,10 +48,14 @@ exclude = [
   "/.github",
   "/docs",
 ]
+[tool.hatch.build.targets.sdist.shared-data]
+"src/forklift.sh" = "bin/forklift"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]
 sources = ["src"]
+[tool.hatch.build.targets.wheel.shared-data]
+"src/forklift.sh" = "bin/forklift"
 
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = "text/markdown"
@@ -58,7 +65,7 @@ fragments = [
 
 [tool.black]
 line-length = 88
-target-version = ['py37', 'py38', 'py39', 'py310', 'py311']
+target-version = ['py36', 'py37', 'py38', 'py39', 'py310', 'py311']
 include = '\.pyi?$'
 
 [tool.isort]

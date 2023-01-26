@@ -1,6 +1,28 @@
 #!/bin/bash
 set -eEu -o pipefail
 
+function usage() {
+  echo "Usage: $0 sub-command [OPTIONS]"
+  echo
+  echo "Available sub-commands and their options:"
+  echo
+  echo "start: Start a background daemon for a CLI tool."
+  echo "stop:  Stop a background daemon for a CLI tool."
+  echo "run:   Run a CLI tool using a background process."
+}
+
+case "${1:-}" in
+-h|--help)
+  usage && exit 0 ;;
+start|stop)
+  exec forkliftctl "$@" ;;
+run)
+  shift
+  ;;
+*)
+  usage && exit 1 ;;
+esac
+
 runtime_dir="${XDG_RUNTIME_DIR}"
 if [ -n "$runtime_dir" ]; then
   service_runtime_dir="$runtime_dir/forklift"

@@ -2,17 +2,18 @@ import io
 import os
 import random
 import shlex
+import signal
 import socket
 import string
 import sys
 import time
 from pathlib import Path
-from typing import cast, Any, BinaryIO, Union
+from typing import cast, Any, BinaryIO, Tuple, Union
 
 from .utils import pid_exists
 
 # TODO: Make this generic.
-from black import patched_main as main
+from black import patched_main as black_main
 
 
 class _SocketWriter(io.BufferedIOBase):
@@ -74,43 +75,69 @@ def get_service_runtime_dir_path() -> Path:
     return service_runtime_dir
 
 
-if __name__ == "__main__":
-    # # Do the double-fork dance to daemonize.
-    # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
-    #
-    # pid = os.fork()
-    # if pid > 0:
-    #     sys.exit(0)
-    #
-    # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
-    #
-    # os.setsid()
-    #
-    # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
-    #
-    # pid = os.fork()
-    # if pid > 0:
-    #     sys.exit(0)
-    #
-    # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
-
+def get_pid_and_port_files() -> Tuple[Path, Path]:
     service_runtime_dir_path = get_service_runtime_dir_path()
     pid_file_path = service_runtime_dir_path / "black.pid"
     port_file_path = service_runtime_dir_path / "black.port"
+    return pid_file_path, port_file_path
 
-    # Set up pid file.
+
+def remove_pid_and_port_files():
+    for file_path in get_pid_and_port_files():
+        if file_path.exists():
+            try:
+                file_path.unlink()
+            except Exception:
+                pass
+
+
+def start(daemonize: bool = False) -> None:
+    pid_file_path, port_file_path = get_pid_and_port_files()
+
     if pid_file_path.exists():
         file_pid = int(pid_file_path.read_text())
         if pid_exists(file_pid):
             raise Exception("Forklift process already exists.")
+
+    if daemonize:
+        # Do the double-fork dance to daemonize.
+        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
+
+        pid = os.fork()
+        if pid > 0:
+            sys.exit(0)
+
+        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
+
+        os.setsid()
+
+        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
+
+        pid = os.fork()
+        if pid > 0:
+            sys.exit(0)
+
+        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
+
+        # redirect standard file descriptors
+        sys.stdout.flush()
+        sys.stderr.flush()
+        stdin = open("/dev/null", "rb")
+        stdout = open("/dev/null", "ab")
+        stderr = open("/dev/null", "ab")
+        os.dup2(stdin.fileno(), sys.stdin.fileno())
+        os.dup2(stdout.fileno(), sys.stdout.fileno())
+        os.dup2(stderr.fileno(), sys.stderr.fileno())
+
+    # Write pid file.
     pid = os.getpid()
-    pid_file_path.write_text(f"{pid}\n")
+    pid_file_path.write_bytes(b"%d\n" % pid)
 
     # Open socket.
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     host, port = sock.getsockname()
-    port_file_path.write_text(f"{port}\n")
+    port_file_path.write_bytes(b"%d\n" % port)
 
     # Listen for connections.
     try:
@@ -137,6 +164,8 @@ if __name__ == "__main__":
     # * https://www.win.tue.nl/~aeb/linux/lk/lk-10.html
 
     rfile = conn.makefile("rb", 0)
+    stdin2 = open("/dev/null", "rb")
+    os.dup2(stdin2.fileno(), sys.stdin.fileno())
     sys.stdout = io.TextIOWrapper(
         cast(BinaryIO, _SocketWriter(conn, b"1")), write_through=True
     )
@@ -147,14 +176,14 @@ if __name__ == "__main__":
     pid = os.fork()
     if pid == 0:
         print(f"child proc started", file=sys.__stdout__)
-        start = time.monotonic()
+        start_time = time.monotonic()
         sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
         try:
             # TODO: Make this generic.
-            main()
+            black_main()
         finally:
             print("child proc ended", file=sys.__stdout__)
-            print(f"Time: {time.monotonic() - start:.3f}", file=sys.__stdout__)
+            print(f"Time: {time.monotonic() - start_time:.3f}", file=sys.__stdout__)
     else:
         try:
             _pid, wait_status = os.waitpid(pid, 0)
@@ -171,3 +200,49 @@ if __name__ == "__main__":
             sys.stdout.close()
             sys.stderr.close()
             conn.shutdown(socket.SHUT_WR)
+
+
+def stop() -> None:
+    try:
+        pid_file_path, _port_file_path = get_pid_and_port_files()
+        if not pid_file_path.exists():
+            print("Forklift daemon process not found.")
+            sys.exit(1)
+
+        file_pid = int(pid_file_path.read_text())
+        if not pid_exists(file_pid):
+            print("Forklift daemon process not found.")
+            sys.exit(1)
+
+        os.kill(file_pid, signal.SIGTERM)
+        for _i in range(20):
+            time.sleep(0.05)
+            if not pid_exists(file_pid):
+                break
+        else:
+            os.kill(file_pid, signal.SIGKILL)
+
+        print("Forklift daemon process stopped.")
+
+    finally:
+        remove_pid_and_port_files()
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) != 1:
+        print(f"Usage: {sys.argv[0]} start|stop")
+        sys.exit(1)
+    (cmd,) = args
+
+    if cmd == "start":
+        start(daemonize=True)
+    elif cmd == "stop":
+        stop()
+    else:
+        print(f"Usage: {sys.argv[0]} start|stop")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
