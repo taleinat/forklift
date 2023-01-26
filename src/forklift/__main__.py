@@ -173,33 +173,27 @@ def start(daemonize: bool = False) -> None:
         cast(BinaryIO, _SocketWriter(conn, b"2")), write_through=True
     )
 
-    pid = os.fork()
-    if pid == 0:
-        print(f"child proc started", file=sys.__stdout__)
-        start_time = time.monotonic()
-        sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
+    start_time = time.monotonic()
+    sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
+    try:
+        # TODO: Make this generic.
+        sys.argv[0] = "black"
+        black_main()
+    except SystemExit as exc:
+        end_time = time.monotonic()
+        print(f"Time: {end_time - start_time}", file=sys.__stdout__)
+        exit_code = exc.code
+        print(f"{exit_code=}", file=sys.__stdout__)
+        conn.sendall(f"rc={exit_code}\n".encode())
+        print("Goodbye!", file=sys.__stdout__)
+    finally:
         try:
-            # TODO: Make this generic.
-            black_main()
-        finally:
-            print("child proc ended", file=sys.__stdout__)
-            print(f"Time: {time.monotonic() - start_time:.3f}", file=sys.__stdout__)
-    else:
-        try:
-            _pid, wait_status = os.waitpid(pid, 0)
-            print("done waiting for child proc", file=sys.__stdout__)
-            exit_code = os.waitstatus_to_exitcode(wait_status)
-            print(f"{exit_code=}", file=sys.__stdout__)
-            conn.sendall(f"rc={exit_code}\n".encode())
-            print("Goodbye!", file=sys.__stdout__)
-        finally:
-            try:
-                rfile.close()
-            except Exception:
-                pass
-            sys.stdout.close()
-            sys.stderr.close()
-            conn.shutdown(socket.SHUT_WR)
+            rfile.close()
+        except Exception:
+            pass
+        sys.stdout.close()
+        sys.stderr.close()
+        conn.shutdown(socket.SHUT_WR)
 
 
 def stop() -> None:
