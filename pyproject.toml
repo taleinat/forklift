@@ -31,7 +31,7 @@ dependencies = [
 dynamic = ["readme", "version"]
 
 [project.scripts]
-forkliftctl = "forklift.__main__:main"
+forkliftctl = "forklift.forkliftctl:main"
 
 [project.urls]
 Homepage = "https://github.com/taleinat/forklift"
