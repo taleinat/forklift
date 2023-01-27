@@ -26,27 +26,17 @@ class _SocketWriter(io.BufferedIOBase):
     def __init__(self, sock: socket.socket, prefix: Union[bytes, bytearray]) -> None:
         self._sock = sock
         self._prefix = prefix
-        self._buff = b""
 
     def writable(self) -> bool:
         return True
 
     def write(self, b: Union[bytes, bytearray]) -> int:  # type: ignore[override]
-        # TODO: Support outputs without a line ending.
-        *lines, lastline = b.split(b"\n")
-        if lines:
-            lines[0] = self._buff + lines[0]
-            self._sock.sendall(b"".join(self._prefix + line + b"\n" for line in lines))
-            self._buff = lastline
-        else:
-            self._buff += lastline
+        n_newlines = b.count(10)
+        # print(b"%b%d\n%b\n" % (self._prefix, n_newlines, b), file=sys.__stderr__)
+        self._sock.sendall(b"%b%d\n%b\n" % (self._prefix, n_newlines, b))
+        # print("DONE WRITING", file=sys.__stderr__)
         with memoryview(b) as view:
             return view.nbytes
-
-    def close(self):
-        if self._buff:
-            self._sock.send(self._prefix + self._buff + b"\n")
-        super().close()
 
     def fileno(self) -> Any:
         return self._sock.fileno()
@@ -115,7 +105,7 @@ def remove_pid_and_port_files(tool_name: str):
 
 
 def start(tool_name: str, daemonize: bool = True) -> None:
-    tool_loader = get_tool_runner(tool_name)
+    tool_runner = get_tool_runner(tool_name)
 
     pid_file_path, port_file_path = get_pid_and_port_file_paths(tool_name)
 
@@ -203,11 +193,12 @@ def start(tool_name: str, daemonize: bool = True) -> None:
     sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
     try:
         sys.argv[0] = tool_name
-        tool_loader()
+        tool_runner()
     except SystemExit as exc:
         # end_time = time.monotonic()
         # print(f"Time: {end_time - start_time}", file=sys.__stdout__)
         exit_code = exc.code
+        # print("EXCEPTION", str(exc), file=sys.__stderr__)
         # print(f"{exit_code=}", file=sys.__stdout__)
         if isinstance(exit_code, bool):
             exit_code = int(exit_code)

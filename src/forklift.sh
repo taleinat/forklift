@@ -77,14 +77,26 @@ echo "$@" >&3
 # TODO: Forward signals to daemon sub-process or make part of this process group.
 
 # Read stdout and stderr from connection, line by line, and echo them.
-# TODO: Support outputs without a line ending.
-while IFS= read -r line; do
+IFS=
+while read -r line; do
   case "$line" in
     1*)
-      echo "${line:1}" >&1
+      n_newlines="${line:1}"
+      for (( i=1; i <= n_newlines; i++ )); do
+        read -r line <&3
+        echo "$line"
+      done
+      read -r line <&3
+      echo -n "$line"
       ;;
     2*)
-      echo "${line:1}" >&2
+      n_newlines="${line:1}"
+      for (( i=1; i <= n_newlines; i++ )); do
+        read -r line <&3
+        echo "$line" >&2
+      done
+      read -r line <&3
+      echo -n "$line" >&2
       ;;
     rc=*)
       rc="${line:3}"
