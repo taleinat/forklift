@@ -71,8 +71,8 @@ trap close_connection EXIT
 
 # Write cmdline arguments to tcp connection.
 echo "$@" >&3
-# # Redirect stdin into tcp connection.
-# exec 3<&0
+# TODO: Redirect stdin into tcp connection.
+# Note: It seems this will require re-writing in C or some such.
 
 # TODO: Forward signals to daemon sub-process or make part of this process group.
 
