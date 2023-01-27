@@ -71,34 +71,40 @@ trap close_connection EXIT
 
 # Write cmdline arguments to tcp connection.
 echo "$@" >&3
-# TODO: Redirect stdin into tcp connection.
-# Note: It seems this will require re-writing in C or some such.
 
 # TODO: Forward signals to daemon sub-process or make part of this process group.
 
 # Read stdout and stderr from connection, line by line, and echo them.
 IFS=
-while read -r line; do
+while read -r -u 3 line; do
   case "$line" in
     1*)
+      # stdout
       n_newlines="${line:1}"
       for (( i=1; i <= n_newlines; i++ )); do
-        read -r line <&3
+        read -r -u 3 line
         echo "$line"
       done
-      read -r line <&3
+      read -r -u 3 line
       echo -n "$line"
       ;;
     2*)
+      # stderr
       n_newlines="${line:1}"
       for (( i=1; i <= n_newlines; i++ )); do
-        read -r line <&3
+        read -r -u 3 line
         echo "$line" >&2
       done
-      read -r line <&3
+      read -r -u 3 line
       echo -n "$line" >&2
       ;;
+    3*)
+      # stdin
+      read -r line2
+      echo "$line2" >&3
+      ;;
     rc=*)
+      # exit
       rc="${line:3}"
       exit "$rc"
       ;;
@@ -107,4 +113,4 @@ while read -r line; do
       exit 1
       ;;
   esac
-done <&3
+done

@@ -15,6 +15,7 @@ runners: Dict[str, Union[str, Callable[[], None]]] = {
     "isort": "isort.main:main",
     "mypy": "mypy.__main__:console_entry",
     "pylint": "pylint:run_pylint",
+    "_debug": "_debug:main"
 }
 
 

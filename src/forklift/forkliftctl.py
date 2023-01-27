@@ -20,12 +20,15 @@ from .tools import ToolExceptionBase, get_tool_runner
 from .utils import pid_exists
 
 
-class _SocketWriter(io.BufferedIOBase):
+class _SocketWriter(io.RawIOBase):
     """TODO!"""
 
     def __init__(self, sock: socket.socket, prefix: Union[bytes, bytearray]) -> None:
         self._sock = sock
         self._prefix = prefix
+
+    def readable(self) -> bool:
+        return False
 
     def writable(self) -> bool:
         return True
@@ -37,6 +40,45 @@ class _SocketWriter(io.BufferedIOBase):
         # print("DONE WRITING", file=sys.__stderr__)
         with memoryview(b) as view:
             return view.nbytes
+
+    def fileno(self) -> Any:
+        return self._sock.fileno()
+
+
+class StdinWrapper(io.RawIOBase):
+    """TODO!"""
+
+    def __init__(self, sock: socket.socket) -> None:
+        self._sock = sock
+        self._buf = bytearray()
+
+    def readable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return False
+
+    def readline(self, size: int = -1) -> bytes:
+        # print(f"readline({size=})", file=sys.__stdout__)
+        self._sock.sendall(b"3\n")
+        buf = self._buf
+        while size:
+            chunk = self._sock.recv(size if size != -1 else 4096)
+            # print(f"CHUNK {chunk}", file=sys.__stdout__)
+            if not chunk:
+                self._buf = bytearray()
+                return bytes(buf)
+            idx = chunk.find(10)  # ord("\n") == 10
+            if idx >= 0:
+                size = idx + 1
+            if len(chunk) >= size:
+                buf.extend(chunk[:size])
+                self._buf = chunk[size:]
+                return bytes(buf)
+            buf.extend(chunk)
+            size = size - len(chunk) if size != -1 else -1
+
+    read = readline
 
     def fileno(self) -> Any:
         return self._sock.fileno()
@@ -180,8 +222,10 @@ def start(tool_name: str, daemonize: bool = True) -> None:
     # * https://www.win.tue.nl/~aeb/linux/lk/lk-10.html
 
     rfile = conn.makefile("rb", 0)
-    stdin2 = open("/dev/null", "rb")
-    os.dup2(stdin2.fileno(), sys.stdin.fileno())
+    sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
+
+    sys.stdin.close()
+    sys.stdin = io.TextIOWrapper(cast(BinaryIO, StdinWrapper(conn)))
     sys.stdout = io.TextIOWrapper(
         cast(BinaryIO, _SocketWriter(conn, b"1")), write_through=True
     )
@@ -190,7 +234,6 @@ def start(tool_name: str, daemonize: bool = True) -> None:
     )
 
     # start_time = time.monotonic()
-    sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
     try:
         sys.argv[0] = tool_name
         tool_runner()
@@ -212,10 +255,7 @@ def start(tool_name: str, daemonize: bool = True) -> None:
         conn.sendall(f"rc={exit_code}\n".encode())
         # print("Goodbye!", file=sys.__stdout__)
     finally:
-        try:
-            rfile.close()
-        except Exception:
-            pass
+        sys.stdin.close()
         sys.stdout.close()
         sys.stderr.close()
         conn.shutdown(socket.SHUT_WR)
