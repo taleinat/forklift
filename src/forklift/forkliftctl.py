@@ -194,11 +194,16 @@ def start(tool_name: str, daemonize: bool = True) -> None:
     try:
         sys.argv[0] = tool_name
         tool_runner()
-    except SystemExit as exc:
+    except BaseException as exc:
         # end_time = time.monotonic()
         # print(f"Time: {end_time - start_time}", file=sys.__stdout__)
-        exit_code = exc.code
         # print("EXCEPTION", str(exc), file=sys.__stderr__)
+        import traceback
+        traceback.print_exc()
+        if isinstance(exc, SystemExit):
+            exit_code = exc.code
+        else:
+            exit_code = 1
         # print(f"{exit_code=}", file=sys.__stdout__)
         if isinstance(exit_code, bool):
             exit_code = int(exit_code)
