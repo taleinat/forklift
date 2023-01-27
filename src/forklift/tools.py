@@ -1,4 +1,5 @@
-from typing import Callable, Dict
+import importlib
+from typing import Callable, Dict, Union
 
 __all__ = [
     "get_tool_runner",
@@ -8,30 +9,12 @@ __all__ = [
 ]
 
 
-def run_black() -> None:
-    """Run black."""
-    from black import patched_main
-
-    patched_main()
-
-
-def run_isort() -> None:
-    """Run isort."""
-    from isort.main import main
-
-    main()
-
-
-def run_flake8() -> None:
-    from flake8.main.cli import main
-
-    main()
-
-
-runners: Dict[str, Callable[[], None]] = {
-    "black": run_black,
-    "isort": run_isort,
-    "flake8": run_flake8,
+runners: Dict[str, Union[str, Callable[[], None]]] = {
+    "black": "black:patched_main",
+    "flake8": "flake8.main.cli:main",
+    "isort": "isort.main:main",
+    "mypy": "mypy.__main__:console_entry",
+    "pylint": "pylint:run_pylint",
 }
 
 
@@ -65,6 +48,11 @@ def get_tool_runner(tool_name: str) -> Callable[[], None]:
     if "/" in tool_name or "\\" in tool_name:
         raise InvalidToolName(tool_name=tool_name)
     try:
-        return runners[tool_name]
+        runner = runners[tool_name]
     except KeyError:
         raise UnsupportedTool(tool_name=tool_name)
+
+    module_name, function_name = runner.split(":")
+    module = importlib.import_module(module_name)
+    function = getattr(module, function_name)
+    return function
