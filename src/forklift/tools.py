@@ -11,6 +11,7 @@ __all__ = [
 
 runners: Dict[str, Union[str, Callable[[], None]]] = {
     "black": "black:patched_main",
+    "hatch": "hatch.cli:main",
     "flake8": "flake8.main.cli:main",
     "isort": "isort.main:main",
     "mypy": "mypy.__main__:console_entry",
