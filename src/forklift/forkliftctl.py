@@ -20,6 +20,18 @@ from .tools import ToolExceptionBase, get_tool_runner
 from .utils import pid_exists
 
 
+class DaemonAlreadyExistsError(ToolExceptionBase):
+
+    def __str__(self):
+        return f'Forklift daemon process for tool "{self.tool_name}" already exists.'
+
+
+class DaemonDoesNotExistError(ToolExceptionBase):
+
+    def __str__(self):
+        return f'Forklift daemon process for tool "{self.tool_name}" does not exist.'
+
+
 class _SocketWriter(io.RawIOBase):
     """TODO!"""
 
@@ -154,7 +166,7 @@ def start(tool_name: str, daemonize: bool = True) -> None:
     if pid_file_path.exists():
         file_pid = int(pid_file_path.read_text())
         if pid_exists(file_pid):
-            raise Exception("Forklift process already exists.")
+            raise DaemonAlreadyExistsError(tool_name=tool_name)
 
     if daemonize:
         # Do the double-fork dance to daemonize.
@@ -265,13 +277,11 @@ def stop(tool_name: str) -> None:
     try:
         pid_file_path, _port_file_path = get_pid_and_port_file_paths(tool_name)
         if not pid_file_path.exists():
-            print(f'"forklift {tool_name}" daemon process not found.')
-            sys.exit(1)
+            raise DaemonDoesNotExistError(tool_name)
 
         file_pid = int(pid_file_path.read_text())
         if not pid_exists(file_pid):
-            print(f'"forklift {tool_name}" daemon process not found.')
-            sys.exit(1)
+            raise DaemonDoesNotExistError(tool_name)
 
         os.kill(file_pid, signal.SIGTERM)
         for _i in range(20):
@@ -308,17 +318,19 @@ def main() -> None:
         try:
             if cmd == "start":
                 start(tool_name)
-                sys.exit(0)
             elif cmd == "stop":
                 stop(tool_name)
-                sys.exit(0)
             elif cmd == "restart":
-                stop(tool_name)
+                try:
+                    stop(tool_name)
+                except DaemonDoesNotExistError:
+                    pass
                 start(tool_name)
-                sys.exit(0)
         except ToolExceptionBase as exc:
             print(str(exc))
             sys.exit(1)
+        else:
+            sys.exit(0)
 
     print_usage()
     sys.exit(1)
