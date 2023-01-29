@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, Set, Tuple, Union, cast
+from typing import Any, BinaryIO, Optional, Set, Tuple, Union, cast
 
 from forklift.project import get_tool_names
 from vendor.filelock import FileLock
@@ -77,8 +77,10 @@ class StdinWrapper(io.RawIOBase):
     def writable(self) -> bool:
         return False
 
-    def readline(self, size: int = -1) -> bytes:
+    def readline(self, size: Optional[int] = -1) -> bytes:
         # print(f"readline({size=})", file=sys.__stdout__)
+        if size is None:
+            size = -1
         self._sock.sendall(b"3\n")
         buf = self._buf
         while size:
@@ -86,16 +88,18 @@ class StdinWrapper(io.RawIOBase):
             # print(f"CHUNK {chunk}", file=sys.__stdout__)
             if not chunk:
                 self._buf = bytearray()
-                return bytes(buf)
+                break
             idx = chunk.find(10)  # ord("\n") == 10
             if idx >= 0:
                 size = idx + 1
             if len(chunk) >= size:
                 buf.extend(chunk[:size])
-                self._buf = chunk[size:]
-                return bytes(buf)
+                self._buf = bytearray(chunk[size:])
+                break
             buf.extend(chunk)
             size = size - len(chunk) if size != -1 else -1
+
+        return buf
 
     read = readline
 
