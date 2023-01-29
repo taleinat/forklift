@@ -11,13 +11,20 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, BinaryIO, Tuple, Union, cast
+from typing import Any, BinaryIO, Literal, Set, Tuple, Union, cast
 
+from forklift.project import get_tool_names
 from vendor.filelock import FileLock
 
 from .__version__ import __version__
-from .tools import ToolExceptionBase, get_tool_runner
+from .tools import ToolExceptionBase, UnsupportedTool, get_tool_runner
 from .utils import pid_exists
+
+
+class InvalidCommand(Exception):
+    def __init__(self, command: str):
+        super().__init__(command)
+        self.command = command
 
 
 class DaemonAlreadyExistsError(ToolExceptionBase):
@@ -175,7 +182,7 @@ def start(tool_name: str, daemonize: bool = True) -> None:
         pid = os.fork()
         if pid > 0:
             print(f'"forklift {tool_name}" daemon process starting...')
-            sys.exit(0)
+            return
 
         # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
 
@@ -235,6 +242,7 @@ def start(tool_name: str, daemonize: bool = True) -> None:
 
     rfile = conn.makefile("rb", 0)
     sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
+    sys.argv[0] = tool_name
 
     sys.stdin.close()
     sys.stdin = io.TextIOWrapper(cast(BinaryIO, StdinWrapper(conn)))
@@ -247,17 +255,16 @@ def start(tool_name: str, daemonize: bool = True) -> None:
 
     # start_time = time.monotonic()
     try:
-        sys.argv[0] = tool_name
         tool_runner()
     except BaseException as exc:
         # end_time = time.monotonic()
         # print(f"Time: {end_time - start_time}", file=sys.__stdout__)
         # print("EXCEPTION", str(exc), file=sys.__stderr__)
-        import traceback
-        traceback.print_exc()
         if isinstance(exc, SystemExit):
             exit_code = exc.code
         else:
+            import traceback
+            traceback.print_exc()
             exit_code = 1
         # print(f"{exit_code=}", file=sys.__stdout__)
         if isinstance(exit_code, bool):
@@ -271,9 +278,15 @@ def start(tool_name: str, daemonize: bool = True) -> None:
         sys.stdout.close()
         sys.stderr.close()
         conn.shutdown(socket.SHUT_WR)
+        sys.exit(0)
 
 
 def stop(tool_name: str) -> None:
+    try:
+        get_tool_runner(tool_name)
+    except UnsupportedTool:
+        raise DaemonDoesNotExistError(tool_name)
+
     try:
         pid_file_path, _port_file_path = get_pid_and_port_file_paths(tool_name)
         if not pid_file_path.exists():
@@ -298,39 +311,77 @@ def stop(tool_name: str) -> None:
 
 
 def print_usage() -> None:
+    """Print a message about how to run forkliftctl."""
     print(f"Usage: {sys.argv[0]} start|stop tool_name")
+
+
+def do_action(tool_name: str, action: str) -> None:
+    """Apply an action (e.g. start or stop) for a given tool."""
+    if action == "start":
+        start(tool_name)
+    elif action == "stop":
+        stop(tool_name)
+    elif action == "restart":
+        try:
+            stop(tool_name)
+        except DaemonDoesNotExistError:
+            pass
+        start(tool_name)
+    else:
+        raise InvalidCommand(action)
 
 
 def main() -> None:
     args = sys.argv[1:]
 
+    if any(arg == "-h" or arg == "--help" for arg in args):
+        print_usage()
+        sys.exit(0)
+
     if len(args) == 1:
         (cmd,) = args
-        if cmd == "-h" or cmd == "--help":
-            print_usage()
-            sys.exit(0)
-        elif cmd == "version" or cmd == "--version":
+        if cmd == "version" or cmd == "--version":
             print(f"forklift v{__version__}")
             sys.exit(0)
     elif len(args) == 2:
         (cmd, tool_name) = args
         tool_name = tool_name.strip().lower()
-        try:
-            if cmd == "start":
-                start(tool_name)
-            elif cmd == "stop":
-                stop(tool_name)
-            elif cmd == "restart":
+
+        if tool_name == "all":
+            tool_names = get_tool_names(Path.cwd())
+            failed_for_tools: Set[str] = set()
+            for _tool_name in tool_names:
                 try:
-                    stop(tool_name)
-                except DaemonDoesNotExistError:
-                    pass
-                start(tool_name)
-        except ToolExceptionBase as exc:
-            print(str(exc))
-            sys.exit(1)
+                    do_action(tool_name=_tool_name, action=cmd)
+                except ToolExceptionBase:
+                    failed_for_tools.add(_tool_name)
+
+            succeeded_for_tools = set(tool_names) - failed_for_tools
+            if cmd == "restart":
+                if succeeded_for_tools:
+                    print(f"Restarted forklift daemons for tools:", ", ".join(sorted(succeeded_for_tools)))
+                    sys.exit(0)
+                if failed_for_tools:
+                    print("Failed to restart forklift daemons for tools:", ", ".join(sorted(failed_for_tools)))
+                    sys.exit(1)
+            elif cmd == "start" or cmd == "stop":
+                if succeeded_for_tools:
+                    action_str = {"stop": "stopped"}.get(cmd, cmd + "ed").capitalize()
+                    print(f"{action_str} forklift daemons for tools:", ", ".join(sorted(succeeded_for_tools)))
+                    sys.exit(0)
+                else:
+                    print(f"No tools to {cmd} forklift daemons for.")
+                    sys.exit(0)
         else:
-            sys.exit(0)
+            try:
+                do_action(tool_name=tool_name, action=cmd)
+            except ToolExceptionBase as exc:
+                print(str(exc))
+                sys.exit(1)
+            except InvalidCommand as exc:
+                print(str(exc))
+            else:
+                sys.exit(0)
 
     print_usage()
     sys.exit(1)
