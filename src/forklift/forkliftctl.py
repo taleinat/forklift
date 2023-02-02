@@ -259,7 +259,7 @@ def start(tool_name: str, daemonize: bool = True) -> None:
 
     # start_time = time.monotonic()
     try:
-        tool_runner()
+        retval = tool_runner()
     except BaseException as exc:
         # end_time = time.monotonic()
         # print(f"Time: {end_time - start_time}", file=sys.__stdout__)
@@ -275,9 +275,15 @@ def start(tool_name: str, daemonize: bool = True) -> None:
             exit_code = int(exit_code)
         elif not isinstance(exit_code, int):
             exit_code = 1
+    else:
+        if isinstance(retval, int):
+            exit_code = retval
+        else:
+            exit_code = 0
+    finally:
         conn.sendall(f"rc={exit_code}\n".encode())
         # print("Goodbye!", file=sys.__stdout__)
-    finally:
+
         sys.stdin.close()
         sys.stdout.close()
         sys.stderr.close()

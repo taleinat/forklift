@@ -30,7 +30,7 @@ esac
 
 
 # Find service runtime directory.
-runtime_dir="${XDG_RUNTIME_DIR}"
+runtime_dir="${XDG_RUNTIME_DIR:-}"
 if [ -n "$runtime_dir" ]; then
   service_runtime_dir="$runtime_dir/forklift"
 else
