@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
-
+from typing import TYPE_CHECKING, List, Optional
 
 if sys.version_info >= (3, 11):
     try:
@@ -30,7 +29,9 @@ def get_tool_names(start_path: Path) -> List[str]:
     pyproject_toml_path = get_pyproject_toml(project_root_path)
     if pyproject_toml_path is not None:
         try:
-            pyproject_tool_names = read_tool_names_from_pyproject_toml(pyproject_toml_path)
+            pyproject_tool_names = read_tool_names_from_pyproject_toml(
+                pyproject_toml_path
+            )
         except tomllib.TOMLDecodeError as exc:
             raise Exception("Failed reading tool names from pyproject.toml.") from exc
         tool_names.extend(pyproject_tool_names)
@@ -54,7 +55,9 @@ def get_pyproject_toml(project_root_path: Path) -> Optional[Path]:
 
 def find_project_root(start_path: Path) -> Optional[Path]:
     """Find the root directory of a project."""
-    dir_paths_to_check = ([start_path] if start_path.is_dir() else []) + list(start_path.parents)
+    dir_paths_to_check = list(start_path.parents)
+    if start_path.is_dir():
+        dir_paths_to_check.insert(0, start_path)
     for dir_path in dir_paths_to_check:
         if (dir_path / "pyproject.toml").is_file():
             return dir_path

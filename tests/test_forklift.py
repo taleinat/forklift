@@ -4,13 +4,14 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Union
 
 import pytest
 
 
 def get_bin_path(project_path: Path) -> Path:
-    return project_path.parent / "venv" / ("Scripts" if sys.platform == "win32" else "bin")
+    return (
+        project_path.parent / "venv" / ("Scripts" if sys.platform == "win32" else "bin")
+    )
 
 
 # @pytest.fixture(scope="session")
@@ -41,8 +42,11 @@ def testproj() -> Path:
         venv_path = Path(tmp_dir) / "venv"
         subprocess.run([sys.executable, "-m", "venv", str(venv_path)])
         bin_path = get_bin_path(proj_dir)
-        subprocess.run([str(bin_path / "pip"), "install", ".", "black", "flake8", "isort"],
-                       cwd=str(Path(__file__).parents[1]), check=True)
+        subprocess.run(
+            [str(bin_path / "pip"), "install", ".", "black", "flake8", "isort"],
+            cwd=str(Path(__file__).parents[1]),
+            check=True,
+        )
         yield proj_dir
 
 
@@ -61,9 +65,14 @@ def test_forklift_isort(testproj, tool_cmd):
 
     run_env = {}
     for env_var_name in os.environ:
-        if env_var_name == "TMPDIR" or env_var_name == "USER" or env_var_name.startswith("XDG_"):
+        if (
+            env_var_name == "TMPDIR"
+            or env_var_name == "USER"
+            or env_var_name.startswith("XDG_")
+        ):
             run_env[env_var_name] = os.environ[env_var_name]
-    def run(cmd: list[str], check: bool = False) -> Union[subprocess.CompletedProcess, subprocess.CompletedProcess[bytes]]:
+
+    def run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(
             cmd,
             check=check,

@@ -71,14 +71,14 @@ fragments = [
 
 [tool.black]
 line-length = 88
-target-version = ['py36', 'py37', 'py38', 'py39', 'py310', 'py311']
+target-version = ["py36", "py37", "py38", "py39", "py310", "py311"]
 include = '\.pyi?$'
-extend-exclude = 'vendor'
+extend-exclude = 'vendor|tests/testproj'
 
 [tool.isort]
 atomic = true
 profile = "black"
 line_length = 88
 skip_gitignore = true
-extend_skip_glob = ["vendor"]
+extend_skip_glob = ["vendor", "tests/testproj"]
 known_first_party = ["forklift"]

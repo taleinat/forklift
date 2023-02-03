@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 from typing import Any, BinaryIO, Optional, Set, Tuple, Union, cast
 
@@ -28,13 +29,11 @@ class InvalidCommand(Exception):
 
 
 class DaemonAlreadyExistsError(ToolExceptionBase):
-
     def __str__(self):
         return f'Forklift daemon process for tool "{self.tool_name}" already exists.'
 
 
 class DaemonDoesNotExistError(ToolExceptionBase):
-
     def __str__(self):
         return f'Forklift daemon process for tool "{self.tool_name}" does not exist.'
 
@@ -131,11 +130,9 @@ def get_service_runtime_dir_path() -> Path:
         if service_runtime_dirs:
             return service_runtime_dirs[0]
 
-        random_part = "".join(
-            [random.choice(string.ascii_letters) for _i in range(6)]
-        )
+        random_part = "".join([random.choice(string.ascii_letters) for _i in range(6)])
         service_runtime_dir = (
-                temp_dir_path / f"forklift-{os.getenv('USER')}-{random_part}"
+            temp_dir_path / f"forklift-{os.getenv('USER')}-{random_part}"
         )
         service_runtime_dir.mkdir(exist_ok=False, mode=0o700)
         return service_runtime_dir
@@ -144,10 +141,15 @@ def get_service_runtime_dir_path() -> Path:
 def get_isolated_service_runtime_dir_path(tool_name) -> Path:
     service_runtime_dir = get_service_runtime_dir_path()
 
-    tool_executable_path: bytes = subprocess.run(f"command -v {shlex.quote(tool_name)}", shell=True, check=True, capture_output=True).stdout.strip()
+    tool_executable_path: bytes = subprocess.run(
+        f"command -v {shlex.quote(tool_name)}",
+        shell=True,
+        check=True,
+        capture_output=True,
+    ).stdout.strip()
     tool_executable_dir_path: bytes = os.path.dirname(tool_executable_path)
-    tool_executable_dir_path_hash: str = hashlib.sha256(tool_executable_dir_path).hexdigest()[:8]
-    isolated_path: Path = service_runtime_dir / tool_executable_dir_path_hash
+    isolation_hash: str = hashlib.sha256(tool_executable_dir_path).hexdigest()[:8]
+    isolated_path: Path = service_runtime_dir / isolation_hash
 
     isolated_path.mkdir(exist_ok=True, mode=0o700)
     return isolated_path
@@ -160,13 +162,25 @@ def get_pid_and_port_file_paths(tool_name: str) -> Tuple[Path, Path]:
     return pid_file_path, port_file_path
 
 
-def remove_pid_and_port_files(tool_name: str):
+def remove_pid_and_port_files(tool_name: str) -> None:
     for file_path in get_pid_and_port_file_paths(tool_name):
         if file_path.exists():
             try:
                 file_path.unlink()
             except Exception:
                 pass
+
+
+def daemon_teardown(
+    sock: socket.socket, pid: int, pid_file_path: Path, port_file_path: Path
+) -> None:
+    """Close socket and remove pid and port files upon daemon shutdown."""
+    sock.close()
+    if pid_file_path.exists():
+        file_pid = int(pid_file_path.read_text())
+        if file_pid == pid:
+            pid_file_path.unlink(missing_ok=True)
+            port_file_path.unlink(missing_ok=True)
 
 
 def start(tool_name: str, daemonize: bool = True) -> None:
@@ -181,24 +195,20 @@ def start(tool_name: str, daemonize: bool = True) -> None:
 
     if daemonize:
         # Do the double-fork dance to daemonize.
-        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
+        # See:
+        # * https://stackoverflow.com/a/5386753
+        # * https://www.win.tue.nl/~aeb/linux/lk/lk-10.html
 
         pid = os.fork()
         if pid > 0:
             print(f'"forklift {tool_name}" daemon process starting...')
             return
 
-        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
-
         os.setsid()
-
-        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
 
         pid = os.fork()
         if pid > 0:
             sys.exit(0)
-
-        # print(f"{os.getpid()=}, {os.getpgid(0)=}, {os.getsid(0)=}")
 
         # redirect standard file descriptors
         sys.stdout.flush()
@@ -217,20 +227,22 @@ def start(tool_name: str, daemonize: bool = True) -> None:
     # Open socket.
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
+
+    # Write port file.
     host, port = sock.getsockname()
     port_file_path.write_bytes(b"%d\n" % port)
 
     # Listen for connections.
+    sock.listen()
+    print(f"Listening on {host}:{port} (pid={pid}) ...")
     try:
-        sock.listen()
-        print(f"Listening on {host}:{port} (pid={pid}) ...")
         while True:
             conn, address = sock.accept()
             print(f"Got connection from: {address}")
             if os.fork() == 0:
                 break
-    except:
-        # Cleanup upon daemon shutdown.
+    except BaseException:
+        # Server is exiting: Clean up as needed.
         sock.close()
         if pid_file_path.exists():
             file_pid = int(pid_file_path.read_text())
@@ -238,11 +250,6 @@ def start(tool_name: str, daemonize: bool = True) -> None:
                 pid_file_path.unlink(missing_ok=True)
                 port_file_path.unlink(missing_ok=True)
         raise
-
-    # TODO: Need to do something like the double-fork dance to decouple from the parent process?
-    # See:
-    # * https://stackoverflow.com/a/5386753
-    # * https://www.win.tue.nl/~aeb/linux/lk/lk-10.html
 
     rfile = conn.makefile("rb", 0)
     sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
@@ -267,7 +274,6 @@ def start(tool_name: str, daemonize: bool = True) -> None:
         if isinstance(exc, SystemExit):
             exit_code = exc.code
         else:
-            import traceback
             traceback.print_exc()
             exit_code = 1
         # print(f"{exit_code=}", file=sys.__stdout__)
@@ -369,15 +375,24 @@ def main() -> None:
             succeeded_for_tools = set(tool_names) - failed_for_tools
             if cmd == "restart":
                 if succeeded_for_tools:
-                    print(f"Restarted forklift daemons for tools:", ", ".join(sorted(succeeded_for_tools)))
+                    print(
+                        "Restarted forklift daemons for tools:",
+                        ", ".join(sorted(succeeded_for_tools)),
+                    )
                     sys.exit(0)
                 if failed_for_tools:
-                    print("Failed to restart forklift daemons for tools:", ", ".join(sorted(failed_for_tools)))
+                    print(
+                        "Failed to restart forklift daemons for tools:",
+                        ", ".join(sorted(failed_for_tools)),
+                    )
                     sys.exit(1)
             elif cmd == "start" or cmd == "stop":
                 if succeeded_for_tools:
-                    action_str = {"stop": "stopped"}.get(cmd, cmd + "ed").capitalize()
-                    print(f"{action_str} forklift daemons for tools:", ", ".join(sorted(succeeded_for_tools)))
+                    action_str = "Stopped" if cmd == "stop" else "Started"
+                    print(
+                        f"{action_str} forklift daemons for tools:",
+                        ", ".join(sorted(succeeded_for_tools)),
+                    )
                     sys.exit(0)
                 else:
                     print(f"No tools to {cmd} forklift daemons for.")
