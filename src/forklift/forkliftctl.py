@@ -235,12 +235,20 @@ def start(tool_name: str, daemonize: bool = True) -> None:
     # Listen for connections.
     sock.listen()
     print(f"Listening on {host}:{port} (pid={pid}) ...")
+    subproc_pids = set()
     try:
         while True:
             conn, address = sock.accept()
             print(f"Got connection from: {address}")
-            if os.fork() == 0:
+            newpid = os.fork()
+            if newpid == 0:
                 break
+
+            # Avoid "zombie" processes: Reap completed sub-processes.
+            done_subproc_pids = {x for x in subproc_pids if os.waitpid(x, os.WNOHANG)[0] != 0}
+            print(f"{done_subproc_pids=}")
+            subproc_pids -= done_subproc_pids
+            subproc_pids.add(newpid)
     except BaseException:
         # Server is exiting: Clean up as needed.
         sock.close()
