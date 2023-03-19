@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -59,41 +60,37 @@ def testproj() -> Path:
     ],
     ids=lambda tool_cmd: tool_cmd[0],
 )
-def test_forklift_isort(testproj, tool_cmd):
-    proj_path = testproj
-    bin_path = get_bin_path(proj_path).resolve()
-
-    run_env = {}
-    for env_var_name in os.environ:
-        if (
-            env_var_name == "TMPDIR"
-            or env_var_name == "USER"
-            or env_var_name.startswith("XDG_")
-        ):
-            run_env[env_var_name] = os.environ[env_var_name]
-
-    def run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.run(
-            cmd,
-            check=check,
-            cwd=str(proj_path),
-            env={
-                **run_env,
-                "PATH": f"{str(bin_path)}:{os.environ['PATH']}",
-                "VIRTUAL_ENV": str(bin_path.parent),
-            },
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-        )
-
-    without_forklift_proc = run(tool_cmd)
-    assert without_forklift_proc != 0
-    run(["forklift", "start", tool_cmd[0]], check=True)
+def test_forklift_start_run_stop(testproj, tool_cmd):
+    without_forklift_proc = run(tool_cmd, proj_path=testproj)
+    assert without_forklift_proc.returncode != 0
+    run(["forklift", "start", tool_cmd[0]], proj_path=testproj, check=True)
     try:
-        with_forklift_proc = run(["forklift", "run", *tool_cmd])
+        with_forklift_proc = run(["forklift", "run", *tool_cmd], proj_path=testproj)
     finally:
-        run(["forklift", "stop", tool_cmd[0]], check=True)
+        run(["forklift", "stop", tool_cmd[0]], proj_path=testproj, check=True)
 
     assert with_forklift_proc.stdout == without_forklift_proc.stdout
     assert with_forklift_proc.stderr == without_forklift_proc.stderr
     assert with_forklift_proc.returncode == without_forklift_proc.returncode
+
+
+def run(cmd: list[str], proj_path: Path, check: bool = False) -> subprocess.CompletedProcess[bytes]:
+    pass_through_env_vars = {
+        key: value
+        for key, value in os.environ.items()
+        if re.fullmatch(r"TMPDIR|USER|XDG_.*", key)
+    }
+
+    bin_path = get_bin_path(proj_path).resolve()
+    return subprocess.run(
+        cmd,
+        check=check,
+        cwd=str(proj_path),
+        env={
+            **pass_through_env_vars,
+            "PATH": f"{str(bin_path)}:{os.getenv('PATH', '')}".strip(":"),
+            "VIRTUAL_ENV": str(bin_path.parent),
+        },
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+    )
