@@ -69,10 +69,22 @@ function close_connection {
 }
 trap close_connection EXIT
 
-# Write cmdline arguments to tcp connection.
+
+# Read companion process PID.
+read -r -u 3 pid
+
+# Forward some signals.
+function forward_signal() {
+  kill -s "$1" "$pid"
+}
+for sig in INT TERM USR1 USR2; do
+  trap "forward_signal $sig" "$sig"
+done
+
+
+# Send cmdline arguments.
 echo "$@" >&3
 
-# TODO: Forward signals to daemon sub-process or make part of this process group.
 
 # Read stdout and stderr from connection, line by line, and echo them.
 IFS=

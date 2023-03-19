@@ -16,6 +16,7 @@ runners: Dict[str, Union[str, Callable[[], None]]] = {
     "isort": "isort.main:main",
     "mypy": "mypy.__main__:console_entry",
     "pylint": "pylint:run_pylint",
+    "__test_sleep_and_exit_on_signal": "forklift.testutils:sleep",
 }
 
 

@@ -259,6 +259,9 @@ def start(tool_name: str, daemonize: bool = True) -> None:
                 port_file_path.unlink(missing_ok=True)
         raise
 
+    # Send pid.
+    conn.sendall(b"%d\n" % os.getpid())
+
     rfile = conn.makefile("rb", 0)
     sys.argv[1:] = shlex.split(rfile.readline().strip().decode())
     sys.argv[0] = tool_name
@@ -295,8 +298,8 @@ def start(tool_name: str, daemonize: bool = True) -> None:
         else:
             exit_code = 0
     finally:
-        conn.sendall(f"rc={exit_code}\n".encode())
-        # print("Goodbye!", file=sys.__stdout__)
+        conn.sendall(b"rc=%d\n" % exit_code)
+        # print(f"Goodbye! rc={exit_code}", file=sys.__stdout__)
 
         sys.stdin.close()
         sys.stdout.close()

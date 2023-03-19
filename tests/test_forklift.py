@@ -1,9 +1,11 @@
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -48,6 +50,13 @@ def testproj() -> Path:
             cwd=str(Path(__file__).parents[1]),
             check=True,
         )
+        sleep_and_exit_on_signal_script = textwrap.dedent("""\
+            #!/usr/bin/env python
+            import forklift.testutils
+            
+            forklift.testutils.sleep_and_exit_on_signal()
+            """)
+        (bin_path / "__test_sleep_and_exit_on_signal").write_text(sleep_and_exit_on_signal_script)
         yield proj_dir
 
 
@@ -74,7 +83,25 @@ def test_forklift_start_run_stop(testproj, tool_cmd):
     assert with_forklift_proc.returncode == without_forklift_proc.returncode
 
 
-def run(cmd: list[str], proj_path: Path, check: bool = False) -> subprocess.CompletedProcess[bytes]:
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM, signal.SIGUSR1, signal.SIGUSR2])
+def test_signal_forwarding(testproj, signum):
+    subcmd = ["__test_sleep_and_exit_on_signal"]
+    run(["forklift", "start", subcmd[0]], proj_path=testproj, check=True)
+    try:
+        proc: subprocess.Popen = run(["forklift", "run", *subcmd], proj_path=testproj, background=True)
+        assert proc.stdout.readline() == b"Sleeping...\n"
+        assert proc.poll() is None
+        proc.send_signal(signum)
+        proc.wait(0.5)
+        assert b"Received signal" in proc.stdout.read()
+    finally:
+        run(["forklift", "stop", subcmd[0]], proj_path=testproj, check=True)
+
+
+def run(cmd: list[str], proj_path: Path, background: bool = False, check: bool = False) -> subprocess.CompletedProcess[bytes] | subprocess.Popen:
+    if background and check:
+        raise ValueError("Must not set both background=True and check=True.")
+
     pass_through_env_vars = {
         key: value
         for key, value in os.environ.items()
@@ -82,9 +109,7 @@ def run(cmd: list[str], proj_path: Path, check: bool = False) -> subprocess.Comp
     }
 
     bin_path = get_bin_path(proj_path).resolve()
-    return subprocess.run(
-        cmd,
-        check=check,
+    proc_kwargs = dict(
         cwd=str(proj_path),
         env={
             **pass_through_env_vars,
@@ -92,5 +117,11 @@ def run(cmd: list[str], proj_path: Path, check: bool = False) -> subprocess.Comp
             "VIRTUAL_ENV": str(bin_path.parent),
         },
         stdin=subprocess.DEVNULL,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+
+    if background:
+        return subprocess.Popen(cmd, **proc_kwargs)
+    else:
+        return subprocess.run(cmd, check=check, **proc_kwargs)
